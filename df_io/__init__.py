@@ -88,4 +88,4 @@ def write_df(df, s3_path, fmt='csv', gzip_level=9, chunksize=None,
         flush_and_close(f)
 
 
-__version__ = '0.0.0'
+__version__ = '0.0.1'
