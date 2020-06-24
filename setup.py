@@ -1,15 +1,18 @@
 import io
+import re
 import setuptools
-import df_io
 
 
 with io.open("README.md", "rt", encoding="utf8") as f:
     long_description = f.read()
 
+with io.open("autohash/__init__.py", "rt", encoding="utf8") as f:
+    version = re.search(r"__version__ = \'(.*?)\'", f.read()).group(1)
+
 
 setuptools.setup(
     name="df_io",
-    version=df_io.__version__,
+    version=version,
     author="NAGY, Attila",
     author_email="nagy.attila@gmail.com",
     description="Helpers for doing IO with Pandas DataFrames",
