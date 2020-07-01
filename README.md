@@ -13,7 +13,7 @@ This method supports:
 
 ### Examples
 
-Write a Pandas DataFrame (df) to an S3 path in CSV format:
+Write a Pandas DataFrame (df) to an S3 path in CSV format (the default):
 
 ```python
 import df_io
@@ -27,7 +27,7 @@ The same with gzip compression:
 df_io.write_df(df, 's3://bucket/dir/mydata.csv.gz')
 ```
 
-Using JSON lines (the default):
+Using JSON lines:
 
 ```python
 df_io.write_df(df, 's3://bucket/dir/mydata.json.gz', fmt='json')
