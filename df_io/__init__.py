@@ -40,7 +40,7 @@ def write_df(df, s3_path, fmt='csv', gzip_level=9, chunksize=None,
         except ValueError:
             pass
 
-    writer_defaults = {'csv': {'index': False, 'encoding': 'UTF_8'},
+    writer_defaults = {'csv': {'index': False, 'encoding': 'utf-8'},
                        'json': {'orient': 'records', 'lines': True}
                        }
     if not writer_options and fmt in writer_defaults:
