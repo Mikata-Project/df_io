@@ -4,7 +4,9 @@ import shutil
 import tempfile
 from io import TextIOWrapper
 import numpy as np
+import pandas as pd
 import s3fs
+import zstandard
 
 
 def _writer_wrapper(writer, f, writer_args, writer_options):
@@ -17,8 +19,24 @@ def _writer_wrapper(writer, f, writer_args, writer_options):
     return f
 
 
-def write_df(df, s3_path, fmt='csv', gzip_level=9, chunksize=None,
-             writer_args=[], writer_options={}):
+def read_df(path, fmt="csv", reader_args=[], reader_options={}):
+    pd_reader = getattr(pd, 'read_{}'.format(fmt))
+    if path.endswith(".zstd"):
+        if path.startswith('s3://'):
+            s3 = s3fs.S3FileSystem(anon=False)
+            _r = s3.open(path, 'rb')
+        else:
+            _r = open(path, 'rb')
+        dctx = zstandard.ZstdDecompressor()
+        with dctx.stream_reader(_r) as compressor:
+            return pd_reader(compressor, *reader_args, **reader_options)
+    else:
+        return pd_reader(path, *reader_args, **reader_options)
+
+
+def write_df(df, s3_path, fmt="csv", gzip_level=9, chunksize=None,
+             writer_args=[], writer_options={},
+             zstd_options={"level": 5, "threads": -1}):
     """
     Pandas DataFrame write helper
 
@@ -31,8 +49,8 @@ def write_df(df, s3_path, fmt='csv', gzip_level=9, chunksize=None,
 
     def flush_and_close(f):
         """
-        Flush and close for the gzip case (non-gzip will receive a double
-        flush).
+        Flush and close for the compressed case (non-compressed will receive
+        a double flush).
         """
         try:
             f.flush()
@@ -40,7 +58,7 @@ def write_df(df, s3_path, fmt='csv', gzip_level=9, chunksize=None,
         except ValueError:
             pass
 
-    writer_defaults = {'csv': {'index': False, 'encoding': 'utf-8'},
+    writer_defaults = {'csv': {'index': False, 'encoding': 'UTF_8'},
                        'json': {'orient': 'records', 'lines': True}
                        }
     if not writer_options and fmt in writer_defaults:
@@ -57,6 +75,9 @@ def write_df(df, s3_path, fmt='csv', gzip_level=9, chunksize=None,
         if filename.endswith('.gz'):
             f = gzip.GzipFile(filename, mode='wb', compresslevel=gzip_level,
                               fileobj=f)
+        if filename.endswith('.zstd'):
+            cctx = zstandard.ZstdCompressor(**zstd_options)
+            f = cctx.stream_writer(f, write_size=32 * 1024, closefd=False)
         writer = getattr(df, 'to_{}'.format(fmt))
         if fmt in ['pickle', 'parquet']:
             # These support writing only to path as of pandas 0.24.
@@ -88,4 +109,4 @@ def write_df(df, s3_path, fmt='csv', gzip_level=9, chunksize=None,
         flush_and_close(f)
 
 
-__version__ = '0.0.3'
+__version__ = '0.0.4'

@@ -20,7 +20,7 @@ setuptools.setup(
     long_description_content_type="text/markdown",
     url='https://github.com/Mikata-Project/df_io',
     packages=setuptools.find_packages(),
-    install_requires=['numpy', 's3fs'],
+    install_requires=['numpy', 's3fs', 'zstandard', 'pandas'],
     classifiers=[
         "Programming Language :: Python",
         "License :: OSI Approved :: MIT License",
