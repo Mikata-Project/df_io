@@ -7,7 +7,7 @@ Python helpers for doing IO with Pandas DataFrames
 This method supports:
 * streaming writes
 * chunked writes
-* gzip compression
+* gzip/zstandard compression
 * passing parameters to Pandas' writers
 * writing to AWS S3 and local files
 
@@ -26,6 +26,13 @@ The same with gzip compression:
 ```python
 df_io.write_df(df, 's3://bucket/dir/mydata.csv.gz')
 ```
+
+With zstandard compression using pickle:
+
+```python
+df_io.write_df(df, 's3://bucket/dir/mydata.pickle.zstd', fmt='pickle')
+```
+
 
 Using JSON lines:
 
