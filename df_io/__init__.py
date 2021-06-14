@@ -1,8 +1,8 @@
 import os
 import gzip
+import io
 import shutil
 import tempfile
-from io import TextIOWrapper
 import numpy as np
 import pandas as pd
 import s3fs
@@ -14,7 +14,8 @@ def _writer_wrapper(writer, f, writer_args, writer_options):
         writer(f, *writer_args, **writer_options)
     except TypeError:
         # hack for https://github.com/pandas-dev/pandas/issues/19827
-        f = TextIOWrapper(f)
+        # provide compatibility with older Pandas
+        f = io.TextIOWrapper(f)
         writer(f, *writer_args, **writer_options)
     return f
 
@@ -102,11 +103,15 @@ def write_df(df, s3_path, fmt="csv", gzip_level=9, chunksize=None,
                 f = _writer_wrapper(writer, f, writer_args, writer_options)
                 # we have to write a newline after every rounds, so won't get
                 # the new round started in the same line
-                f.write('\n')
+                # wrapper can return binary or text, act accordingly
+                if isinstance(f, (io.RawIOBase, io.BufferedIOBase)):
+                    f.write(b'\n')
+                else:
+                    f.write('\n')
         else:
             # in all other cases we're just calling the writer
             _writer_wrapper(writer, f, writer_args, writer_options)
         flush_and_close(f)
 
 
-__version__ = '0.0.4'
+__version__ = '0.0.5'
