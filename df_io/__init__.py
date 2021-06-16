@@ -103,10 +103,12 @@ def write_df(df, s3_path, fmt="csv", gzip_level=9, chunksize=None,
                 f = _writer_wrapper(writer, f, writer_args, writer_options)
                 # we have to write a newline after every rounds, so won't get
                 # the new round started in the same line
-                # wrapper can return binary or text, act accordingly
-                if isinstance(f, (io.RawIOBase, io.BufferedIOBase)):
+                try:
+                    # Try to adapt to the required mode by catching TypeError
+                    # Seems to be more reliable than trying to figure out the
+                    # binary/text type.
                     f.write(b'\n')
-                else:
+                except TypeError:
                     f.write('\n')
         else:
             # in all other cases we're just calling the writer
@@ -114,4 +116,4 @@ def write_df(df, s3_path, fmt="csv", gzip_level=9, chunksize=None,
         flush_and_close(f)
 
 
-__version__ = '0.0.5'
+__version__ = '0.0.6'
