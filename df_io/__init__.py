@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 import s3fs
 import zstandard
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 def _writer_wrapper(writer, f, writer_args, writer_options):
@@ -18,6 +19,32 @@ def _writer_wrapper(writer, f, writer_args, writer_options):
         f = io.TextIOWrapper(f)
         writer(f, *writer_args, **writer_options)
     return f
+
+
+class FileWriter:
+    def __init__(self, files, max_workers=None):
+        if max_workers is None:
+            max_workers = len(files)
+        self._files = files
+        self._executor = ThreadPoolExecutor(max_workers)
+
+    def write(self, data):
+        futures = {self._executor.submit(f.write, data): f for f in self._files}
+        for future in as_completed(futures):
+            res = future.result()
+        return res
+
+    def close(self):
+        map(lambda x: x.close(), self._files)
+
+    def flush(self, *args, **kwargs):
+        map(lambda x: x.flush(), self._files)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, exc_traceback):
+        self.close()
 
 
 def read_df(path, fmt="csv", reader_args=[], reader_options={}):
@@ -35,8 +62,8 @@ def read_df(path, fmt="csv", reader_args=[], reader_options={}):
         return pd_reader(path, *reader_args, **reader_options)
 
 
-def write_df(df, s3_path, fmt="csv", gzip_level=9, chunksize=None,
-             writer_args=[], writer_options={},
+def write_df(df, s3_path, copy_paths=[], fmt="csv", gzip_level=9,
+             chunksize=None, writer_args=[], writer_options={},
              zstd_options={"level": 5, "threads": -1}):
     """
     Pandas DataFrame write helper
@@ -46,6 +73,10 @@ def write_df(df, s3_path, fmt="csv", gzip_level=9, chunksize=None,
     writer_args and writer_options.
     If the s3_path parameter starts with s3://, it will try to do an S3 write,
     otherwise opens a local file with that path.
+
+    Additional output files can be specified in `copy_paths` parameter, as
+    a list of either local, or `s3://...` paths. The same output will be written
+    there as to `s3_path` in parallel to reduce overhead.
     """
 
     def flush_and_close(f):
@@ -66,13 +97,15 @@ def write_df(df, s3_path, fmt="csv", gzip_level=9, chunksize=None,
         writer_options = writer_defaults[fmt]
 
     filename = os.path.basename(s3_path)
+    _files = []
     # support S3 and local writes as well
-    if s3_path.startswith('s3://'):
-        s3 = s3fs.S3FileSystem(anon=False)
-        _w = s3.open(s3_path, 'wb')
-    else:
-        _w = open(s3_path, 'wb')
-    with _w as f:
+    for _path in [s3_path] + copy_paths:
+        if _path.startswith('s3://'):
+            s3 = s3fs.S3FileSystem(anon=False)
+            _files.append(s3.open(_path, 'wb'))
+        else:
+            _files.append(open(_path, 'wb'))
+    with FileWriter(_files) as f:
         if filename.endswith('.gz'):
             f = gzip.GzipFile(filename, mode='wb', compresslevel=gzip_level,
                               fileobj=f)
@@ -116,4 +149,4 @@ def write_df(df, s3_path, fmt="csv", gzip_level=9, chunksize=None,
         flush_and_close(f)
 
 
-__version__ = '0.0.6'
+__version__ = '0.0.7'
