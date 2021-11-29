@@ -28,6 +28,9 @@ class FileWriter:
         self._files = files
         self._executor = ThreadPoolExecutor(max_workers)
 
+    def read(self):
+        raise NotImplemented("Can only write")
+
     def write(self, data):
         futures = {self._executor.submit(f.write, data): f for f in self._files}
         for future in as_completed(futures):
@@ -45,6 +48,23 @@ class FileWriter:
 
     def __exit__(self, exc_type, exc_value, exc_traceback):
         self.close()
+
+    def __iter__(self, *args, **kwargs):
+        """Pandas is_file_like needs this to exist."""
+        raise NotImplementedError
+
+    def readable(self):
+        return False
+
+    def seekable(self):
+        return False
+
+    def writable(self):
+        return True
+
+    @property
+    def closed(self):
+        return all([x.closed for x in self._files])
 
 
 def read_df(path, fmt="csv", reader_args=[], reader_options={}):
@@ -149,4 +169,4 @@ def write_df(df, s3_path, copy_paths=[], fmt="csv", gzip_level=9,
         flush_and_close(f)
 
 
-__version__ = '0.0.7'
+__version__ = '0.0.8'
