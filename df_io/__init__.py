@@ -70,11 +70,11 @@ class FileWriter:
 def read_df(path, fmt="csv", reader_args=[], reader_options={}):
     pd_reader = getattr(pd, 'read_{}'.format(fmt))
     if path.endswith(".zstd"):
-        if path.startswith('s3://'):
+        if path.startswith("s3://"):
             s3 = s3fs.S3FileSystem(anon=False)
-            _r = s3.open(path, 'rb')
+            _r = s3.open(path, "rb")
         else:
-            _r = open(path, 'rb')
+            _r = open(path, "rb")
         dctx = zstandard.ZstdDecompressor()
         with dctx.stream_reader(_r) as compressor:
             return pd_reader(compressor, *reader_args, **reader_options)
@@ -120,20 +120,19 @@ def write_df(df, s3_path, copy_paths=[], fmt="csv", gzip_level=9,
     _files = []
     # support S3 and local writes as well
     for _path in [s3_path] + copy_paths:
-        if _path.startswith('s3://'):
+        if _path.startswith("s3://"):
             s3 = s3fs.S3FileSystem(anon=False)
-            _files.append(s3.open(_path, 'wb'))
+            _files.append(s3.open(_path, "wb"))
         else:
-            _files.append(open(_path, 'wb'))
+            _files.append(open(_path, "wb"))
     with FileWriter(_files) as f:
-        if filename.endswith('.gz'):
-            f = gzip.GzipFile(filename, mode='wb', compresslevel=gzip_level,
-                              fileobj=f)
-        if filename.endswith('.zstd'):
+        if filename.endswith(".gz"):
+            f = gzip.GzipFile(filename, mode="wb", compresslevel=compress_level, fileobj=f)
+        if filename.endswith(".zstd"):
             cctx = zstandard.ZstdCompressor(**zstd_options)
             f = cctx.stream_writer(f, write_size=32 * 1024, closefd=False)
-        writer = getattr(df, 'to_{}'.format(fmt))
-        if fmt in ['pickle', 'parquet']:
+        writer = getattr(df, "to_{}".format(fmt))
+        if fmt in ["pickle", "parquet"]:
             # These support writing only to path as of pandas 0.24.
             # Will be easier when this gets done:
             # https://github.com/pandas-dev/pandas/issues/15008
@@ -141,18 +140,15 @@ def write_df(df, s3_path, copy_paths=[], fmt="csv", gzip_level=9,
                 writer(tmpfile.name, *writer_args, **writer_options)
                 tmpfile.seek(0)
                 shutil.copyfileobj(tmpfile, f)
-        elif fmt == 'csv':
+        elif fmt == "csv":
             # CSV natively supports chunked writes
-            _writer_wrapper(writer, f, writer_args,
-                            dict(writer_options, chunksize=chunksize))
-        elif chunksize and fmt == 'json' and \
-                writer_options.get('orient') == 'records' and \
-                writer_options.get('lines'):
+            _writer_wrapper(writer, f, writer_args, dict(writer_options, chunksize=chunksize))
+        elif chunksize and fmt == "json" and writer_options.get("orient") == "records" and writer_options.get("lines"):
             # calculate the number of desired parts
-            split_parts = int(max(1, len(df)/chunksize))
+            split_parts = int(max(1, len(df) / chunksize))
             # split the DF into parts
             for _df in np.array_split(df, split_parts):
-                writer = getattr(_df, 'to_{}'.format(fmt))
+                writer = getattr(_df, "to_{}".format(fmt))
                 f = _writer_wrapper(writer, f, writer_args, writer_options)
                 # we have to write a newline after every rounds, so won't get
                 # the new round started in the same line
@@ -160,13 +156,13 @@ def write_df(df, s3_path, copy_paths=[], fmt="csv", gzip_level=9,
                     # Try to adapt to the required mode by catching TypeError
                     # Seems to be more reliable than trying to figure out the
                     # binary/text type.
-                    f.write(b'\n')
+                    f.write(b"\n")
                 except TypeError:
-                    f.write('\n')
+                    f.write("\n")
         else:
             # in all other cases we're just calling the writer
             _writer_wrapper(writer, f, writer_args, writer_options)
         flush_and_close(f)
 
 
-__version__ = '0.0.8'
+__version__ = "0.0.8"
