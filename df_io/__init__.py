@@ -1,3 +1,4 @@
+import bz2
 import os
 import gzip
 import io
@@ -7,7 +8,7 @@ import numpy as np
 import pandas as pd
 import s3fs
 import zstandard
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from parallel_write import Writer
 
 
 def _writer_wrapper(writer, f, writer_args, writer_options):
@@ -21,55 +22,14 @@ def _writer_wrapper(writer, f, writer_args, writer_options):
     return f
 
 
-class FileWriter:
-    def __init__(self, files, max_workers=None):
-        if max_workers is None:
-            max_workers = len(files)
-        self._files = files
-        self._executor = ThreadPoolExecutor(max_workers)
-
-    def read(self):
-        raise NotImplemented("Can only write")
-
-    def write(self, data):
-        futures = {self._executor.submit(f.write, data): f for f in self._files}
-        for future in as_completed(futures):
-            res = future.result()
-        return res
-
-    def close(self):
-        map(lambda x: x.close(), self._files)
-
-    def flush(self, *args, **kwargs):
-        map(lambda x: x.flush(), self._files)
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_value, exc_traceback):
-        self.close()
-
-    def __iter__(self, *args, **kwargs):
-        """Pandas is_file_like needs this to exist."""
-        raise NotImplementedError
-
-    def readable(self):
-        return False
-
-    def seekable(self):
-        return False
-
-    def writable(self):
-        return True
-
-    @property
-    def closed(self):
-        return all([x.closed for x in self._files])
-
-
 def read_df(path, fmt="csv", reader_args=[], reader_options={}):
-    pd_reader = getattr(pd, 'read_{}'.format(fmt))
-    if path.endswith(".zstd"):
+    reader_defaults = {"csv": {"encoding": "UTF_8"},
+                       "json": {"orient": "records", "lines": True}}
+    if not reader_options:
+        reader_options = reader_defaults.get(fmt, {})
+    pd_reader = getattr(pd, "read_{}".format(fmt))
+    # pandas can't (yet) read zstandard, implement it here
+    if path.endswith(".zstd") or path.endswith(".zst"):
         if path.startswith("s3://"):
             s3 = s3fs.S3FileSystem(anon=False)
             _r = s3.open(path, "rb")
@@ -77,26 +37,53 @@ def read_df(path, fmt="csv", reader_args=[], reader_options={}):
             _r = open(path, "rb")
         dctx = zstandard.ZstdDecompressor()
         with dctx.stream_reader(_r) as compressor:
-            return pd_reader(compressor, *reader_args, **reader_options)
+            # these readers try to seek, which is not supported
+            # by the decompressor, so open a temporary file, uncompress data
+            # to it and use that for reading with pandas
+            if fmt in ["parquet", "feather"]:
+                with tempfile.NamedTemporaryFile(delete=False) as tmpfile:
+                    shutil.copyfileobj(compressor, tmpfile)
+                    tmpfile.flush()
+                    tmpfile.seek(0)
+                    return pd_reader(tmpfile, *reader_args, **reader_options)
+            else:
+                return pd_reader(compressor, *reader_args, **reader_options)
+    # these readers can't handle gzip/s3 on their own
+    elif fmt in ["parquet", "feather"] and path.endswith(".gz"):
+        if path.startswith("s3://"):
+            s3 = s3fs.S3FileSystem(anon=False)
+            _r = s3.open(path, "rb")
+        else:
+            _r = open(path, "rb")
+        with gzip.GzipFile(fileobj=_r) as gz:
+            return pd_reader(gz, *reader_args, **reader_options)
+    elif path.endswith(".bz2"):
+        if path.startswith("s3://"):
+            s3 = s3fs.S3FileSystem(anon=False)
+            _r = s3.open(path, "rb")
+        else:
+            _r = open(path, "rb")
+        with bz2.open(_r) as bz:
+            return pd_reader(bz, *reader_args, **reader_options)
     else:
         return pd_reader(path, *reader_args, **reader_options)
 
 
-def write_df(df, s3_path, copy_paths=[], fmt="csv", gzip_level=9,
+def write_df(df, path, copy_paths=[], fmt="csv", compress_level=6,
              chunksize=None, writer_args=[], writer_options={},
-             zstd_options={"level": 5, "threads": -1}):
+             zstd_options={"threads": -1}):
     """
     Pandas DataFrame write helper
 
     Can write to local files and to S3 paths in any format, supported by the
     installed pandas version. Writer-specific arguments can be given in
     writer_args and writer_options.
-    If the s3_path parameter starts with s3://, it will try to do an S3 write,
+    If the path parameter starts with s3://, it will try to do an S3 write,
     otherwise opens a local file with that path.
 
     Additional output files can be specified in `copy_paths` parameter, as
     a list of either local, or `s3://...` paths. The same output will be written
-    there as to `s3_path` in parallel to reduce overhead.
+    there as to `path` in parallel to reduce overhead.
     """
 
     def flush_and_close(f):
@@ -110,32 +97,37 @@ def write_df(df, s3_path, copy_paths=[], fmt="csv", gzip_level=9,
         except ValueError:
             pass
 
-    writer_defaults = {'csv': {'index': False, 'encoding': 'UTF_8'},
-                       'json': {'orient': 'records', 'lines': True}
-                       }
+    if compress_level is not None:
+        zstd_options["level"] = compress_level
+
+    writer_defaults = {"csv": {"index": False, "encoding": "UTF_8"},
+                       "json": {"orient": "records", "lines": True, "force_ascii": False}}
     if not writer_options and fmt in writer_defaults:
         writer_options = writer_defaults[fmt]
 
-    filename = os.path.basename(s3_path)
+    filename = os.path.basename(path)
     _files = []
     # support S3 and local writes as well
-    for _path in [s3_path] + copy_paths:
+    for _path in copy_paths + [path]:
         if _path.startswith("s3://"):
             s3 = s3fs.S3FileSystem(anon=False)
-            _files.append(s3.open(_path, "wb"))
+            _files.append(_w := s3.open(_path, "wb"))
         else:
-            _files.append(open(_path, "wb"))
-    with FileWriter(_files) as f:
+            _files.append(_w := open(_path, "wb"))
+
+    _w = Writer(_files)
+    with _w as f:
         if filename.endswith(".gz"):
             f = gzip.GzipFile(filename, mode="wb", compresslevel=compress_level, fileobj=f)
-        if filename.endswith(".zstd"):
+        if filename.endswith(".bz2"):
+            f = bz2.open(f, mode="wb", compresslevel=compress_level)
+        if filename.endswith(".zstd") or filename.endswith(".zst"):
             cctx = zstandard.ZstdCompressor(**zstd_options)
             f = cctx.stream_writer(f, write_size=32 * 1024, closefd=False)
         writer = getattr(df, "to_{}".format(fmt))
-        if fmt in ["pickle", "parquet"]:
-            # These support writing only to path as of pandas 0.24.
-            # Will be easier when this gets done:
-            # https://github.com/pandas-dev/pandas/issues/15008
+        if fmt in []:
+            # add any future pandas writers here, which doesn't implement
+            # writing to a (compressed) stream
             with tempfile.NamedTemporaryFile() as tmpfile:
                 writer(tmpfile.name, *writer_args, **writer_options)
                 tmpfile.seek(0)
@@ -165,4 +157,4 @@ def write_df(df, s3_path, copy_paths=[], fmt="csv", gzip_level=9,
         flush_and_close(f)
 
 
-__version__ = "0.0.8"
+__version__ = "0.0.9"
