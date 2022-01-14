@@ -4,11 +4,17 @@ import pandas as pd
 import pytest
 import df_io
 import random
-from moto import mock_s3
 import tempfile
 import os
 import itertools
 
+s3_bucket = "dfio"
+s3_prefix = "df_io"
+AWS_REGION = "us-east-1"
+
+# start localstack with
+# docker run --rm -it -p 4566:4566 -p 4571:4571 localstack/localstack
+localstack_uri = "http://localhost:4566"
 
 fmts = ["csv", "feather", "json", "parquet", "pickle"]
 compress = ["", ".gz", ".bz2", ".zst", ".zstd"]
@@ -37,13 +43,18 @@ def products():
 
 @pytest.fixture
 def aws_credentials():
-    """Mocked AWS Credentials for moto."""
-    print("RUINNING")
-    os.environ["AWS_ACCESS_KEY_ID"] = "testing"
-    os.environ["AWS_SECRET_ACCESS_KEY"] = "testing"
-    os.environ["AWS_SECURITY_TOKEN"] = "testing"
-    os.environ["AWS_SESSION_TOKEN"] = "testing"
-    
+    """Mocked AWS Credentials for localstack."""
+    os.environ["AWS_ACCESS_KEY_ID"] = "test"
+    os.environ["AWS_SECRET_ACCESS_KEY"] = "test"
+    s3 = boto3.resource("s3", region_name=AWS_REGION, endpoint_url=localstack_uri)
+    s3.create_bucket(Bucket=s3_bucket,
+                     CreateBucketConfiguration={"LocationConstraint": AWS_REGION})
+    yield s3
+    # cleanup
+    bucket = s3.Bucket(s3_bucket)
+    bucket.objects.all().delete()
+    bucket.delete()
+
 
 @pytest.fixture
 def df(length=1000):
@@ -97,15 +108,35 @@ def test_csv_encoding(df):
             df_io.write_df(df, path, fmt="csv", writer_options={"encoding": "regergheh34h"})
 
 
-@mock_s3
 @pytest.mark.parametrize("fmt,ext,compresslevel,chunksize", products())
 def test_s3_read_write(df, aws_credentials, fmt, ext, compresslevel, chunksize):
     """Test S3 read/write."""
-    conn = boto3.resource("s3", region_name="us-east-1")
-    conn.create_bucket(Bucket="df_io_test")
-
-    path = f"s3://df_io_test/{fmt}{ext}"
+    fn = f"{fmt}{ext}"
+    path = f"s3://{os.path.join(s3_bucket, s3_prefix, fn)}"
     df_io.write_df(df, path, fmt=fmt, compress_level=compresslevel,
-                   chunksize=chunksize)
-    df_read = df_io.read_df(path, fmt=fmt)
+                   chunksize=chunksize,
+                   s3fs_kwargs={"client_kwargs":
+                       {"endpoint_url": localstack_uri}})
+    df_read = df_io.read_df(path, fmt=fmt,
+                            s3fs_kwargs={"client_kwargs":
+                                {"endpoint_url": localstack_uri}})
     compare_df(df, df_read)
+
+
+@pytest.mark.parametrize("fmt,ext,compresslevel,chunksize", products())
+def test_s3_read_write_copy(df, aws_credentials, fmt, ext, compresslevel, chunksize):
+    """Test S3 read/write."""
+    fn = f"{fmt}{ext}"
+    path = f"s3://{os.path.join(s3_bucket, s3_prefix, fn)}"
+    with tempfile.TemporaryDirectory() as d:
+        copy_paths = [os.path.join(d, f"{fmt}{ext}")]
+        df_io.write_df(df, path, copy_paths=copy_paths, fmt=fmt,
+                       compress_level=compresslevel, chunksize=chunksize,
+                       s3fs_kwargs={"client_kwargs":
+                           {"endpoint_url": localstack_uri}})
+        df_read = df_io.read_df(path, fmt=fmt,
+                                s3fs_kwargs={"client_kwargs":
+                                    {"endpoint_url": localstack_uri}})
+        compare_df(df, df_read)
+        df_read = df_io.read_df(copy_paths[0], fmt=fmt)
+        compare_df(df, df_read)
