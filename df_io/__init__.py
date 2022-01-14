@@ -127,7 +127,7 @@ def write_df(df, path, copy_paths=[], fmt="csv", compress_level=6,
         writer = getattr(df, "to_{}".format(fmt))
         if fmt in []:
             # add any future pandas writers here, which doesn't implement
-            # writing to a (compressed) stream
+            # writing to a (compressed) stream, for eg. because it seeks
             with tempfile.NamedTemporaryFile() as tmpfile:
                 writer(tmpfile.name, *writer_args, **writer_options)
                 tmpfile.seek(0)
