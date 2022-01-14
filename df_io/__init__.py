@@ -22,16 +22,17 @@ def _writer_wrapper(writer, f, writer_args, writer_options):
     return f
 
 
-def read_df(path, fmt="csv", reader_args=[], reader_options={}):
+def read_df(path, fmt="csv", reader_args=[], reader_options={}, s3fs_kwargs={}):
     reader_defaults = {"csv": {"encoding": "UTF_8"},
                        "json": {"orient": "records", "lines": True}}
     if not reader_options:
         reader_options = reader_defaults.get(fmt, {})
     pd_reader = getattr(pd, "read_{}".format(fmt))
+    s3fs_kwargs = {**{"anon": False}, **s3fs_kwargs}
     # pandas can't (yet) read zstandard, implement it here
     if path.endswith(".zstd") or path.endswith(".zst"):
         if path.startswith("s3://"):
-            s3 = s3fs.S3FileSystem(anon=False)
+            s3 = s3fs.S3FileSystem(**s3fs_kwargs)
             _r = s3.open(path, "rb")
         else:
             _r = open(path, "rb")
@@ -48,10 +49,13 @@ def read_df(path, fmt="csv", reader_args=[], reader_options={}):
                     return pd_reader(tmpfile, *reader_args, **reader_options)
             else:
                 return pd_reader(compressor, *reader_args, **reader_options)
-    # these readers can't handle gzip/s3 on their own
-    elif fmt in ["parquet", "feather"] and path.endswith(".gz"):
+    # pandas could read from S3 and even open some compressed formats, but
+    # for testing (localstack) and consistency, we handle all cases the same:
+    # if the URL is an S3 one, wrap it with s3fs and handle decompression here
+    # as well, instead of letting pandas do it
+    elif path.endswith(".gz"):
         if path.startswith("s3://"):
-            s3 = s3fs.S3FileSystem(anon=False)
+            s3 = s3fs.S3FileSystem(**s3fs_kwargs)
             _r = s3.open(path, "rb")
         else:
             _r = open(path, "rb")
@@ -59,19 +63,24 @@ def read_df(path, fmt="csv", reader_args=[], reader_options={}):
             return pd_reader(gz, *reader_args, **reader_options)
     elif path.endswith(".bz2"):
         if path.startswith("s3://"):
-            s3 = s3fs.S3FileSystem(anon=False)
+            s3 = s3fs.S3FileSystem(**s3fs_kwargs)
             _r = s3.open(path, "rb")
         else:
             _r = open(path, "rb")
         with bz2.open(_r) as bz:
             return pd_reader(bz, *reader_args, **reader_options)
     else:
-        return pd_reader(path, *reader_args, **reader_options)
+        if path.startswith("s3://"):
+            s3 = s3fs.S3FileSystem(**s3fs_kwargs)
+            _r = s3.open(path, "rb")
+        else:
+            _r = open(path, "rb")
+        return pd_reader(_r, *reader_args, **reader_options)
 
 
 def write_df(df, path, copy_paths=[], fmt="csv", compress_level=6,
              chunksize=None, writer_args=[], writer_options={},
-             zstd_options={"threads": -1}):
+             zstd_options={"threads": -1}, s3fs_kwargs={}):
     """
     Pandas DataFrame write helper
 
@@ -104,13 +113,14 @@ def write_df(df, path, copy_paths=[], fmt="csv", compress_level=6,
                        "json": {"orient": "records", "lines": True, "force_ascii": False}}
     if not writer_options and fmt in writer_defaults:
         writer_options = writer_defaults[fmt]
+    s3fs_kwargs = {**{"anon": False}, **s3fs_kwargs}
 
     filename = os.path.basename(path)
     _files = []
     # support S3 and local writes as well
     for _path in copy_paths + [path]:
         if _path.startswith("s3://"):
-            s3 = s3fs.S3FileSystem(anon=False)
+            s3 = s3fs.S3FileSystem(**s3fs_kwargs)
             _files.append(_w := s3.open(_path, "wb"))
         else:
             _files.append(_w := open(_path, "wb"))
