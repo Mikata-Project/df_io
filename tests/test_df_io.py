@@ -14,6 +14,7 @@ AWS_REGION = "us-east-1"
 
 # start localstack with
 # docker run --rm -it -p 4566:4566 -p 4571:4571 localstack/localstack
+# if you want debug logs add: -e LS_LOG=DEBUG
 localstack_uri = "http://localhost:4566"
 
 fmts = ["csv", "feather", "json", "parquet", "pickle"]
