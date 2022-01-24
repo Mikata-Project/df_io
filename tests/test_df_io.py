@@ -43,14 +43,16 @@ def products():
 
 
 @pytest.fixture
-def aws_credentials():
+def s3_client():
     """Mocked AWS Credentials for localstack."""
     os.environ["AWS_ACCESS_KEY_ID"] = "test"
     os.environ["AWS_SECRET_ACCESS_KEY"] = "test"
-    s3 = boto3.resource("s3", region_name=AWS_REGION, endpoint_url=localstack_uri)
+    session = boto3.session.Session()
+    s3 = session.resource("s3", region_name=AWS_REGION, endpoint_url=localstack_uri)
+    client = session.client("s3", region_name=AWS_REGION, endpoint_url=localstack_uri)
     s3.create_bucket(Bucket=s3_bucket,
                      CreateBucketConfiguration={"LocationConstraint": AWS_REGION})
-    yield s3
+    yield client
     # cleanup
     bucket = s3.Bucket(s3_bucket)
     bucket.objects.all().delete()
@@ -110,22 +112,20 @@ def test_csv_encoding(df):
 
 
 @pytest.mark.parametrize("fmt,ext,compresslevel,chunksize", products())
-def test_s3_read_write(df, aws_credentials, fmt, ext, compresslevel, chunksize):
+def test_s3_read_write(df, s3_client, fmt, ext, compresslevel, chunksize):
     """Test S3 read/write."""
     fn = f"{fmt}{ext}"
     path = f"s3://{os.path.join(s3_bucket, s3_prefix, fn)}"
     df_io.write_df(df, path, fmt=fmt, compress_level=compresslevel,
                    chunksize=chunksize,
-                   s3fs_kwargs={"client_kwargs":
-                       {"endpoint_url": localstack_uri}})
+                   open_kw={"transport_params": {"client": s3_client}})
     df_read = df_io.read_df(path, fmt=fmt,
-                            s3fs_kwargs={"client_kwargs":
-                                {"endpoint_url": localstack_uri}})
+                            open_kw={"transport_params": {"client": s3_client}})
     compare_df(df, df_read)
 
 
 @pytest.mark.parametrize("fmt,ext,compresslevel,chunksize", products())
-def test_s3_read_write_copy(df, aws_credentials, fmt, ext, compresslevel, chunksize):
+def test_s3_read_write_copy(df, s3_client, fmt, ext, compresslevel, chunksize):
     """Test S3 read/write."""
     fn = f"{fmt}{ext}"
     path = f"s3://{os.path.join(s3_bucket, s3_prefix, fn)}"
@@ -133,11 +133,9 @@ def test_s3_read_write_copy(df, aws_credentials, fmt, ext, compresslevel, chunks
         copy_paths = [os.path.join(d, f"{fmt}{ext}")]
         df_io.write_df(df, path, copy_paths=copy_paths, fmt=fmt,
                        compress_level=compresslevel, chunksize=chunksize,
-                       s3fs_kwargs={"client_kwargs":
-                           {"endpoint_url": localstack_uri}})
+                       open_kw={"transport_params": {"client": s3_client}})
         df_read = df_io.read_df(path, fmt=fmt,
-                                s3fs_kwargs={"client_kwargs":
-                                    {"endpoint_url": localstack_uri}})
+                                open_kw={"transport_params": {"client": s3_client}})
         compare_df(df, df_read)
         df_read = df_io.read_df(copy_paths[0], fmt=fmt)
         compare_df(df, df_read)
