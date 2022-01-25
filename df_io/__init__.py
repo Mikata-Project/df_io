@@ -142,4 +142,4 @@ def write_df(df, path, copy_paths=[], fmt="csv", compress_level=6,
         f.close()
 
 
-__version__ = "0.0.10"
+__version__ = "0.0.11"
