@@ -24,7 +24,20 @@ def _writer_wrapper(writer, fhs, writer_args, writer_options):
 
 
 def read_df(path, fmt="csv", reader_args=[], reader_options={}, open_kw={}):
-    """Read DataFrame."""
+    """Read DataFrame.
+
+    Args:
+        path (str): The path to read from. Can be anything, which `smart_open` supports, like `s3://bucket/file`.
+            Compression type is inferred 
+
+    Kwargs:
+        fmt (str): The format to read. Should work with most of Pandas `read_*` methods.
+        reader_args (list): Argument list for the Pandas `read_$fmt` method.
+        reader_options (dict): Keyword arguments for the Pandas `read_$fmt` method.
+        open_kw (dict): Keyword arguments for `smart_open`.
+    Returns:
+        The read Pandas DataFrame.
+    """
     reader_defaults = {"csv": {"encoding": "UTF_8"},
                        "json": {"orient": "records", "lines": True}}
     if not reader_options:
@@ -62,7 +75,7 @@ def write_df(df, path, copy_paths=[], fmt="csv", compress_level=6,
              chunksize=None, writer_args=[], writer_options={},
              zstd_options={"threads": -1}, open_kw={}):
     """
-    Pandas DataFrame write helper
+    Write Pandas DataFrame.
 
     Can write to local files and to S3 paths in any format, supported by the
     installed pandas version. Writer-specific arguments can be given in
@@ -73,6 +86,22 @@ def write_df(df, path, copy_paths=[], fmt="csv", compress_level=6,
     Additional output files can be specified in `copy_paths` parameter, as
     a list of either local, or `s3://...` paths. The same output will be written
     there as to `path` in parallel to reduce overhead.
+
+    Args:
+        df (pandas.DataFrame): The DataFrame to write.
+        path (str): The path to write to. Can be anything, which `smart_open` supports, like `s3://bucket/file`.
+
+    Kwargs:
+        copy_paths (list[str]): Place a copy to these paths as well. Writes in parallel.
+        fmt (str): The format to write. Should work with most of Pandas `write_*` methods.
+        compress_level (int): Compress level, passed through to the compressor. gzip/bzip2: 1-9, zstd: 1-22.
+        chunksize (int): Break DataFrame into `chunksize` sized chunks and write those. 
+        writer_args (list): Argument list for the Pandas `write_$fmt` method.
+        writer_options (dict): Keyword arguments for the Pandas `write_$fmt` method.
+        zstd_options (dict): Keyword arguments for the `zstd` compressor.
+        open_kw (dict): Keyword arguments for `smart_open`.
+    Returns:
+        None
     """
     if compress_level is not None:
         zstd_options["level"] = compress_level

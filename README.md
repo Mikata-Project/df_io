@@ -2,14 +2,26 @@
 Python helpers for doing IO with Pandas DataFrames
 
 # Available methods
+## read_df
+
+* bzip2/gzip/zstandard compression
+* passing parameters to Pandas' readers
+* reading from anything, which `smart_open` supports (local files, AWS S3 etc)
+* most of the available formats, Pandas supports
+
 ## write_df
 
 This method supports:
 * streaming writes
 * chunked writes
-* gzip/zstandard compression
+* bzip2/gzip/zstandard compression
 * passing parameters to Pandas' writers
-* writing to AWS S3 and local files
+* writing to anything, which `smart_open` supports (local files, AWS S3 etc)
+* most of the available formats, Pandas supports
+
+# Documentation
+
+[API doc](https://github.com/Mikata-Project/df_io/tree/master/docs/df_io.md)
 
 ### Examples
 
